@@ -95,14 +95,16 @@ pulumi.export('key_pair_name', key_pair.key_name)
 
 # Script to initiate ec2 instance
 user_data = """#!/bin/bash
+#user_data script is executed as root
+#echo 'Executed as' $(whoami) # $USER, whoami, id -nu or logname
 sudo yum update -y
 sudo yum upgrade -y
 sudo yum install -y nginx
 sudo systemctl enable nginx
 sudo systemctl start nginx
 sudo yum install -y docker
-sudo groupadd docker
-sudo usermod -aG docker $USER
+#sudo groupadd docker # group already exists
+usermod -aG docker ec2-user
 newgrp docker
 sudo systemctl enable docker
 sudo systemctl start docker
@@ -125,6 +127,25 @@ server {
 }
 EOF
 sudo systemctl restart nginx
+
+# docker compose alternative
+sudo yum install -y nerdctl
+
+# Install minikube (k8) -> needs 2CPU and 2GB RAM to operate
+#curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-latest.x86_64.rpm
+#sudo rpm -Uvh minikube-latest.x86_64.rpm
+#cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+#[kubernetes]
+#name=Kubernetes
+#baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+#enabled=1
+#gpgcheck=1
+#gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+#EOF
+#sudo yum install -y kubectl
+
+# guardgraph installation
+su ec2-user -c 'mkdir ~/repos && cd ~/repos && git clone https://github.com/AgentschapPlantentuinMeise/guardgraph.git'
 """
 
 #launch_template_resource = aws.ec2.LaunchTemplate(
@@ -134,7 +155,7 @@ sudo systemctl restart nginx
                                                   
 b3server = aws.ec2.Instance(
     'b3-server',
-    instance_type="t2.micro",
+    instance_type="t2.micro", #t2 1CPU, t3 2CPU
     ami="ami-0111c5910da90c2a7",#"ami-0f61de2873e29e866",
     user_data=user_data,
     # user_data_base64=base64.b64encode(user_data.encode("ascii")).decode("ascii"),
@@ -144,3 +165,4 @@ b3server = aws.ec2.Instance(
 )
 
 pulumi.export('publicIp', b3server.public_ip)
+pulumi.export('publicDns', b3server.public_dns)
