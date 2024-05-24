@@ -7,6 +7,7 @@ from pulumi_aws import s3
 # Extra imports
 import os
 import base64
+import json
 
 # Create an AWS resource (S3 Bucket)
 bucket = s3.Bucket('b3-bucket',
@@ -115,7 +116,7 @@ docker run -d -p 5000:5000 b3app
 ## expand domain name as ec2 public name is too long for default config
 sudo sed -i 's/http {/http { server_names_hash_bucket_size 128;/' /etc/nginx/nginx.conf
 PUBLIC_HOSTNAME=$(ec2-metadata --public-hostname | cut -f2 -d' ')
-sudo sh -c "cat - > /etc/nginx/conf.d/${PUBLIC_HOSTNAME}.conf" <<EOF                                                                       
+sudo sh -c "cat - > /etc/nginx/conf.d/${PUBLIC_HOSTNAME}.conf" <<EOF
 server {
     listen 80;
     server_name $PUBLIC_HOSTNAME;
@@ -166,3 +167,25 @@ b3server = aws.ec2.Instance(
 
 pulumi.export('publicIp', b3server.public_ip)
 pulumi.export('publicDns', b3server.public_dns)
+
+# Machine learning instance
+role = aws.iam.Role('sagemaker-role',
+            assume_role_policy=json.dumps({
+                'Version': '2012-10-17',
+                'Statement': [{
+                    'Effect': 'Allow',
+                    'Principal': {'Service': 'sagemaker.amazonaws.com'},
+                    'Action': 'sts:AssumeRole',
+                }],
+            }),
+            managed_policy_arns=['arn:aws:iam::aws:policy/AmazonSageMakerFullAccess']
+        )
+
+mli = aws.sagemaker.NotebookInstance("mli",
+    name="b3-notebook-instance",
+    role_arn=role.arn,
+    instance_type="ml.t2.medium",
+    tags={
+        "Name": "b3mli",
+    })
+pulumi.export('sagemakerDns', mli.url)
