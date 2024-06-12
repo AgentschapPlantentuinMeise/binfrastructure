@@ -157,7 +157,7 @@ su ec2-user -c 'mkdir ~/repos && cd ~/repos && git clone https://github.com/Agen
 b3server = aws.ec2.Instance(
     'b3-server',
     #instance_type="t2.micro", #t2 1CPU, t3 2CPU
-    instance_type="t4g.2xlarge",
+    instance_type="c6g.4xlarge", #16 vCPU 32 GB
     ami="ami-0111c5910da90c2a7",#"ami-0f61de2873e29e866",
     user_data=user_data,
     # user_data_base64=base64.b64encode(user_data.encode("ascii")).decode("ascii"),
