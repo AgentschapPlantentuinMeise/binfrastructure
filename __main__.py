@@ -130,23 +130,46 @@ EOF
 sudo systemctl restart nginx
 
 # docker compose alternative
-sudo yum install -y nerdctl
+#sudo yum install -y nerdctl
 
 # Install minikube (k8) -> needs 2CPU and 2GB RAM to operate
-#curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-latest.x86_64.rpm
-#sudo rpm -Uvh minikube-latest.x86_64.rpm
-#cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
-#[kubernetes]
-#name=Kubernetes
-#baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
-#enabled=1
-#gpgcheck=1
-#gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
-#EOF
-#sudo yum install -y kubectl
+curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-latest.x86_64.rpm
+sudo rpm -Uvh minikube-latest.x86_64.rpm
+cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+EOF
+sudo yum install -y kubectl
+minikube start --driver=podman --container-runtime=cri-o
+
+# kompose
+curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.0/kompose-linux-amd64 -o kompose
+chmod +x kompose
+sudo mv ./kompose /usr/local/bin/kompose
 
 # guardgraph installation
+#sudo yum install python3-pip
+#pip3 install --user podman-compose
 su ec2-user -c 'mkdir ~/repos && cd ~/repos && git clone https://github.com/AgentschapPlantentuinMeise/guardgraph.git'
+cd ~/repos/guardgraph
+
+## build containers on minkube cluster
+eval $(minikube docker-env)
+docker build -t localhost/web .
+
+## convert compose setup
+sed -i 's/3.9/3/' docker-compose.yml
+kompose convert
+kubectl apply -f $(ls -m *.yaml | tr -d ' \n')
+#kubectl delete -f $(ls -m *.yaml | tr -d ' \n')
+# List services
+kubectl get services
+# Describe service
+kubectl describe svc web
 """
 
 #launch_template_resource = aws.ec2.LaunchTemplate(
@@ -157,8 +180,8 @@ su ec2-user -c 'mkdir ~/repos && cd ~/repos && git clone https://github.com/Agen
 b3server = aws.ec2.Instance(
     'b3-server',
     #instance_type="t2.micro", #t2 1CPU, t3 2CPU
-    instance_type="c6g.4xlarge", #16 vCPU 32 GB
-    ami="ami-0111c5910da90c2a7",#"ami-0f61de2873e29e866",
+    instance_type="t2.2xlarge", #t4g.2xlarge", # 8 vCPU 32 GB
+    ami="ami-05f804247228852a3", #"ami-0111c5910da90c2a7","ami-0f61de2873e29e866",
     user_data=user_data,
     # user_data_base64=base64.b64encode(user_data.encode("ascii")).decode("ascii"),
     #launch_template=launch_template_resource,
