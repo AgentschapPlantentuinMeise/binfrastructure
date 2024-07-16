@@ -95,21 +95,32 @@ key_pair = aws.ec2.KeyPair('b3-key-pair', public_key=public_key)
 pulumi.export('key_pair_name', key_pair.key_name)
 
 # Script to initiate ec2 instance
+# debug with /var/log/cloud-init* files
 user_data = """#!/bin/bash
 #user_data script is executed as root
 #echo 'Executed as' $(whoami) # $USER, whoami, id -nu or logname
-sudo yum update -y
-sudo yum upgrade -y
-sudo yum install -y nginx
+
+if command -v yum &> /dev/null
+then PACMAN=yum
+elif command -v apt &> /dev/null
+then PACMAN=apt
+else
+  echo No suitable package manager found
+  exit 1
+fi
+
+sudo $PACMAN update -y
+sudo $PACMAN upgrade -y
+sudo $PACMAN install -y nginx
 sudo systemctl enable nginx
 sudo systemctl start nginx
-sudo yum install -y docker
-#sudo groupadd docker # group already exists
+sudo $PACMAN install -y docker
+sudo groupadd docker # group already exists
 usermod -aG docker ec2-user
-newgrp docker
+#newgrp docker
 sudo systemctl enable docker
 sudo systemctl start docker
-sudo yum install -y git python3.11 python3.11-pip
+sudo $PACMAN install -y git python3.11 python3.11-pip
 docker build -t b3app https://github.com/AgentschapPlantentuinMeise/dockshop.git#binfrastructure
 docker run -d -p 5000:5000 b3app
 # nginx config and restart
@@ -130,7 +141,7 @@ EOF
 sudo systemctl restart nginx
 
 # docker compose alternative
-#sudo yum install -y nerdctl
+#sudo $PACMAN install -y nerdctl
 
 # Install minikube (k8) -> needs 2CPU and 2GB RAM to operate
 curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-latest.x86_64.rpm
@@ -143,8 +154,8 @@ enabled=1
 gpgcheck=1
 gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
 EOF
-sudo yum install -y kubectl
-minikube start --driver=podman --container-runtime=cri-o
+sudo $PACMAN install -y kubectl
+su ec2-user -c 'minikube start' #--driver=podman --container-runtime=cri-o
 
 # kompose
 curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.0/kompose-linux-amd64 -o kompose
@@ -152,25 +163,41 @@ chmod +x kompose
 sudo mv ./kompose /usr/local/bin/kompose
 
 # guardgraph installation
-#sudo yum install python3-pip
+#sudo $PACMAN install python3-pip
 #pip3 install --user podman-compose
 su ec2-user -c 'mkdir ~/repos && cd ~/repos && git clone https://github.com/AgentschapPlantentuinMeise/guardgraph.git'
-cd ~/repos/guardgraph
 
-## build containers on minkube cluster
-eval $(minikube docker-env)
-docker build -t localhost/web .
-
-## convert compose setup
-sed -i 's/3.9/3/' docker-compose.yml
-kompose convert
-kubectl apply -f $(ls -m *.yaml | tr -d ' \n')
-#kubectl delete -f $(ls -m *.yaml | tr -d ' \n')
-# List services
-kubectl get services
-# Describe service
-kubectl describe svc web
+su - ec2-user <<"EOF"
+  cd ~/repos/guardgraph
+  
+  ## build containers on minkube cluster
+  # https://minikube.sigs.k8s.io/docs/handbook/pushing/#Linux
+  #eval $(minikube docker-env)
+  #docker build -t localhost/web .
+  #minikube cache add localhost/web:latest
+  #minikube addons enable registry
+  #docker build --tag $(minikube ip):5000/web .
+  #docker push $(minikube ip):5000/web
+  minikube image build -t localhost/web .
+  minikube image build -t localhost/gis containers/gis
+  
+  ## convert compose setup
+  sed -i 's/3.9/3/' docker-compose.yml
+  kompose convert
+  
+  sed -i 's/image: localhost\/web:latest/imagePullPolicy: Never\n          image: localhost\/web:latest/' web-deployment.yaml 
+  
+  kubectl apply -f $(ls -m *.yaml | tr -d ' \n')
+  #kubectl delete -f $(ls -m *.yaml | tr -d ' \n')
+  # List services
+  kubectl get services
+  # Describe service
+  kubectl describe svc web
+EOF
 """
+# Debug minikube
+# kubectl get pods
+
 
 #launch_template_resource = aws.ec2.LaunchTemplate(
 #    "launchTemplateResource",
@@ -186,30 +213,90 @@ b3server = aws.ec2.Instance(
     # user_data_base64=base64.b64encode(user_data.encode("ascii")).decode("ascii"),
     #launch_template=launch_template_resource,
     vpc_security_group_ids=[security_group.id],
-    key_name=key_pair.key_name
+    key_name=key_pair.key_name,
+    root_block_device={"volume_size": 50}
 )
 
 pulumi.export('publicIp', b3server.public_ip)
 pulumi.export('publicDns', b3server.public_dns)
 
 # Machine learning instance
-role = aws.iam.Role('sagemaker-role',
-            assume_role_policy=json.dumps({
-                'Version': '2012-10-17',
-                'Statement': [{
-                    'Effect': 'Allow',
-                    'Principal': {'Service': 'sagemaker.amazonaws.com'},
-                    'Action': 'sts:AssumeRole',
-                }],
-            }),
-            managed_policy_arns=['arn:aws:iam::aws:policy/AmazonSageMakerFullAccess']
-        )
+# Free tier of 3 months is finished
+# role = aws.iam.Role('sagemaker-role',
+#             assume_role_policy=json.dumps({
+#                 'Version': '2012-10-17',
+#                 'Statement': [{
+#                     'Effect': 'Allow',
+#                     'Principal': {'Service': 'sagemaker.amazonaws.com'},
+#                     'Action': 'sts:AssumeRole',
+#                 }],
+#             }),
+#             managed_policy_arns=['arn:aws:iam::aws:policy/AmazonSageMakerFullAccess']
+#         )
 
-mli = aws.sagemaker.NotebookInstance("mli",
-    name="b3-notebook-instance",
-    role_arn=role.arn,
-    instance_type="ml.t2.medium",
-    tags={
-        "Name": "b3mli",
-    })
-pulumi.export('sagemakerDns', mli.url)
+# mli = aws.sagemaker.NotebookInstance("mli",
+#     name="b3-notebook-instance",
+#     role_arn=role.arn,
+#     instance_type="ml.t2.medium",
+#     tags={
+#         "Name": "b3mli",
+#     })
+# pulumi.export('sagemakerDns', mli.url)
+
+# Set up budget, sns & lambda to take down infrastructure if overspending
+## ideally permanent low-cost infrastructure should be in separate stack that does not go down
+
+# ec2shutdown_policy_doc = aws.iam.get_policy_document(
+#     statements=[aws.iam.GetPolicyDocumentStatementArgs(
+#         effect="Allow",
+#         actions=["ec2:Describe*"],
+#         resources=["*"],
+# )])
+# ec2shutdown_policy = aws.iam.Policy("ec2shutdown",
+#     name="ec2shutdown",
+#     description="Policy for shutting down ec2",
+#     policy=ec2shutdown_policy_doc.json)
+# current = aws.get_partition()
+# assume_role = aws.iam.get_policy_document(statements=[aws.iam.GetPolicyDocumentStatementArgs(
+#     effect="Allow",
+#     principals=[aws.iam.GetPolicyDocumentStatementPrincipalArgs(
+#         type="Service",
+#         identifiers=[f"budgets.{current.dns_suffix}"],
+#     )],
+#     actions=["sts:AssumeRole"],
+# )])
+# ec2shutdown_role = aws.iam.Role("ec2shutdown",
+#     name="ec2shutdown",
+#     assume_role_policy=assume_role.json)
+# b3_budget = aws.budgets.Budget("b3_budget",
+#     name="b3_budget",
+#     budget_type="USAGE",
+#     limit_amount="150.0",
+#     limit_unit="dollars",
+#     #time_period_start="2006-01-02_15:04",
+#     time_unit="MONTHLY")
+# b3_budget_action = aws.budgets.BudgetAction("b3_budget",
+#     budget_name=example_budget.name,
+#     action_type="APPLY_IAM_POLICY",
+#     approval_model="AUTOMATIC",
+#     notification_type="ACTUAL",
+#     execution_role_arn=example_role.arn,
+#     action_threshold=aws.budgets.BudgetActionActionThresholdArgs(
+#         action_threshold_type="ABSOLUTE_VALUE",
+#         action_threshold_value=100,
+#     ),
+#     definition=aws.budgets.BudgetActionDefinitionArgs(
+#         iam_action_definition=aws.budgets.BudgetActionDefinitionIamActionDefinitionArgs(
+#             policy_arn=example_policy.arn,
+#             roles=[example_role.name],
+#         ),
+#     ),
+#     subscribers=[aws.budgets.BudgetActionSubscriberArgs(
+#         address="example@example.example",
+#         subscription_type="EMAIL",
+#     )],
+#     tags={
+#         "Tag1": "Value1",
+#         "Tag2": "Value2",
+#     })
+
