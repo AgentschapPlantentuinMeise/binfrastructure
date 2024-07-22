@@ -96,6 +96,7 @@ pulumi.export('key_pair_name', key_pair.key_name)
 
 # Script to initiate ec2 instance
 # debug with /var/log/cloud-init* files
+# cat /var/lib/cloud/instance/user-data.txt
 user_data = """#!/bin/bash
 #user_data script is executed as root
 #echo 'Executed as' $(whoami) # $USER, whoami, id -nu or logname
@@ -111,6 +112,7 @@ fi
 
 sudo $PACMAN update -y
 sudo $PACMAN upgrade -y
+#sudo $PACMAN install -y tmux #screen
 sudo $PACMAN install -y nginx
 sudo systemctl enable nginx
 sudo systemctl start nginx
@@ -179,16 +181,19 @@ su - ec2-user <<"EOF"
   #docker build --tag $(minikube ip):5000/web .
   #docker push $(minikube ip):5000/web
   minikube image build -t localhost/web .
-  minikube image build -t localhost/gis containers/gis
+  #minikube image build -t localhost/gis containers/gis
   
-  ## convert compose setup
-  sed -i 's/3.9/3/' docker-compose.yml
-  kompose convert
+  ## convert compose setup #TODO move to readme for k8 documentatin
+  #sed -i 's/3.9/3/' docker-compose.yml
+  #sed -i 's/\${HOME}//g' docker-compose.yml
+  #sed -i 's/repos/data/g' docker-compose.yml
+  #kompose convert --volumes hostPath
+  #
+  #sed -i 's/image: localhost\/web:latest/imagePullPolicy: Never\\n\ \ \ \ \ \ \ \ \ \ image: localhost\/web:latest/' \
+  #  web-deployment.yaml 
   
-  sed -i 's/image: localhost\/web:latest/imagePullPolicy: Never\n          image: localhost\/web:latest/' web-deployment.yaml 
-  
-  kubectl apply -f $(ls -m *.yaml | tr -d ' \n')
-  #kubectl delete -f $(ls -m *.yaml | tr -d ' \n')
+  kubectl apply -f $(ls -m k8config/*.yaml | tr -d ' \\n')
+  #kubectl delete -f $(ls -m k8config/*.yaml | tr -d ' \\n')
   # List services
   kubectl get services
   # Describe service
