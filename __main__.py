@@ -228,8 +228,7 @@ su - ec2-user <<"EOF"
   
   # Activate web-site initialisation when all resources are ready
   if kubectl wait --for=condition=ready --timeout=4h -n default --all pods; then
-      curl $WEBSERVICEURL
-      # TODO set up init web link to set neo4j password and prepare resources
+      curl $WEBSERVICEURL/init
   else
       echo "K8 NOT READY YET! SOMETHIN PROBABLY WENT WRONG!"
   fi
