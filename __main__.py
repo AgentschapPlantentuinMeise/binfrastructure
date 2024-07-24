@@ -112,7 +112,7 @@ fi
 
 sudo $PACMAN update -y
 sudo $PACMAN upgrade -y
-#sudo $PACMAN install -y tmux #screen
+sudo $PACMAN install -y tmux #screen
 sudo $PACMAN install -y nginx
 sudo systemctl enable nginx
 sudo systemctl start nginx
@@ -123,12 +123,25 @@ usermod -aG docker ec2-user
 sudo systemctl enable docker
 sudo systemctl start docker
 sudo $PACMAN install -y git python3.11 python3.11-pip
-docker build -t b3app https://github.com/AgentschapPlantentuinMeise/dockshop.git#binfrastructure
+#docker build -t b3app #https://github.com/AgentschapPlantentuinMeise/dockshop.git#binfrastructure
 docker run -d -p 5000:5000 b3app
 # nginx config and restart
 ## expand domain name as ec2 public name is too long for default config
 sudo sed -i 's/http {/http { server_names_hash_bucket_size 128;/' /etc/nginx/nginx.conf
-PUBLIC_HOSTNAME=$(ec2-metadata --public-hostname | cut -f2 -d' ')
+
+# Get PUBLIC_HOSTNAME
+# https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html
+if command -v apt-get &> /dev/null
+then
+    sudo apt-get install cloud-utils
+fi
+if command -v ec2-metadata &> /dev/null
+then
+    PUBLIC_HOSTNAME=$(ec2-metadata --public-hostname | cut -f2 -d' ')
+else
+    PUBLIC_HOSTNAME=$(curl http://169.254.169.254/latest/meta-data/public-hostname)
+fi
+
 sudo sh -c "cat - > /etc/nginx/conf.d/${PUBLIC_HOSTNAME}.conf" <<EOF
 server {
     listen 80;
@@ -198,6 +211,28 @@ su - ec2-user <<"EOF"
   kubectl get services
   # Describe service
   kubectl describe svc web
+  
+  # Connect nginx to k8 web container in minikube - https://minikube.sigs.k8s.io/docs/handbook/accessing/
+  # https://faun.pub/accessing-a-remote-minikube-from-a-local-computer-fd6180dd66dd
+  # allow port forwarding in range to include default flask port
+  minikube start --extra-config=apiserver.service-node-port-range=1-65535
+  # Add NodePort 5000 to web service
+  kubectl patch svc web --type='json' -p '[{"op":"replace","path":"/spec/type","value":"NodePort"},{"op":"replace","path":"/spec/ports/0/nodePort","value":5000}]'
+  # Forward internal minikube port to environment running minikube
+  WEBSERVICEURL=$(minikube service web --url)
+  # Need to allow network connections
+  # https://www.uptimia.com/questions/fix-permission-denied-while-connecting-to-upstream-nginx-error
+  sudo setsebool httpd_can_network_connect on
+  sudo sed -i 's/localhost/'$(minikube ip)'/' /etc/nginx/conf.d/${PUBLIC_HOSTNAME}.conf
+  sudo systemctl restart nginx
+  
+  # Activate web-site initialisation when all resources are ready
+  if kubectl wait --for=condition=ready --timeout=4h -n default --all pods; then
+      curl $WEBSERVICEURL
+      # TODO set up init web link to set neo4j password and prepare resources
+  else
+      echo "K8 NOT READY YET! SOMETHIN PROBABLY WENT WRONG!"
+  fi
 EOF
 """
 # Debug minikube
