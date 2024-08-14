@@ -146,6 +146,7 @@ sudo sh -c "cat - > /etc/nginx/conf.d/${PUBLIC_HOSTNAME}.conf" <<EOF
 server {
     listen 80;
     server_name $PUBLIC_HOSTNAME;
+    client_max_body_size 50M;
     location / {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -170,7 +171,8 @@ gpgcheck=1
 gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
 EOF
 sudo $PACMAN install -y kubectl
-su ec2-user -c 'minikube start' #--driver=podman --container-runtime=cri-o
+su ec2-user -c 'minikube start --extra-config=apiserver.service-node-port-range=1-65535' #--driver=podman --container-runtime=cri-o
+# allow port forwarding in range to include default flask port
 
 # kompose
 curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.0/kompose-linux-amd64 -o kompose
@@ -214,8 +216,6 @@ su - ec2-user <<"EOF"
   
   # Connect nginx to k8 web container in minikube - https://minikube.sigs.k8s.io/docs/handbook/accessing/
   # https://faun.pub/accessing-a-remote-minikube-from-a-local-computer-fd6180dd66dd
-  # allow port forwarding in range to include default flask port
-  minikube start --extra-config=apiserver.service-node-port-range=1-65535
   # Add NodePort 5000 to web service
   kubectl patch svc web --type='json' -p '[{"op":"replace","path":"/spec/type","value":"NodePort"},{"op":"replace","path":"/spec/ports/0/nodePort","value":5000}]'
   # Forward internal minikube port to environment running minikube
@@ -223,15 +223,26 @@ su - ec2-user <<"EOF"
   # Need to allow network connections
   # https://www.uptimia.com/questions/fix-permission-denied-while-connecting-to-upstream-nginx-error
   sudo setsebool httpd_can_network_connect on
-  sudo sed -i 's/localhost/'$(minikube ip)'/' /etc/nginx/conf.d/${PUBLIC_HOSTNAME}.conf
+  sudo sed -i 's/localhost/'$(minikube ip)'/' /etc/nginx/conf.d/ec2*.conf
   sudo systemctl restart nginx
   
-  # Activate web-site initialisation when all resources are ready
+  # Activate web-ite initialisation when all resources are ready
   if kubectl wait --for=condition=ready --timeout=4h -n default --all pods; then
       curl $WEBSERVICEURL/init
   else
       echo "K8 NOT READY YET! SOMETHIN PROBABLY WENT WRONG!"
   fi
+  
+  #Enable ssl/https -> domain name required
+  #sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+  #sudo dnf upgrade -y
+  #sudo yum install -y snapd
+  #sudo systemctl enable --now snapd.socket
+  #sudo ln -s /var/lib/snapd/snap /snap
+  #exec bash
+  #sudo snap install --classic certbot
+  #sudo ln -s /snap/bin/certbot /usr/bin/certbot
+  #sudo certbot --nginx
 EOF
 """
 # Debug minikube
@@ -258,6 +269,16 @@ b3server = aws.ec2.Instance(
 
 pulumi.export('publicIp', b3server.public_ip)
 pulumi.export('publicDns', b3server.public_dns)
+
+# Domain routing
+zone = aws.route53.get_zone(name="guardin.net")
+www = aws.route53.Record("www",
+    zone_id=zone.zone_id,
+    name="www.guardin.net",
+    type=aws.route53.RecordType.A,
+    ttl=300,
+    records=[b3server.public_ip]
+)
 
 # Machine learning instance
 # Free tier of 3 months is finished
