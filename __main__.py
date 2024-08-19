@@ -145,7 +145,7 @@ fi
 sudo sh -c "cat - > /etc/nginx/conf.d/${PUBLIC_HOSTNAME}.conf" <<EOF
 server {
     listen 80;
-    server_name $PUBLIC_HOSTNAME;
+    server_name www.guardin.net;
     client_max_body_size 50M;
     location / {
         proxy_set_header Host \$host;
@@ -207,6 +207,10 @@ su - ec2-user <<"EOF"
   #sed -i 's/image: localhost\/web:latest/imagePullPolicy: Never\\n\ \ \ \ \ \ \ \ \ \ image: localhost\/web:latest/' \
   #  web-deployment.yaml 
   
+  # Set kubectl secret(s)
+  kubectl create secret generic neo4j-credential \
+    --from-literal=neo4j-credential="$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c10)"
+  
   kubectl apply -f $(ls -m k8config/*.yaml | tr -d ' \\n')
   #kubectl delete -f $(ls -m k8config/*.yaml | tr -d ' \\n')
   # List services
@@ -234,15 +238,16 @@ su - ec2-user <<"EOF"
   fi
   
   #Enable ssl/https -> domain name required
-  #sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-  #sudo dnf upgrade -y
-  #sudo yum install -y snapd
-  #sudo systemctl enable --now snapd.socket
-  #sudo ln -s /var/lib/snapd/snap /snap
-  #exec bash
-  #sudo snap install --classic certbot
-  #sudo ln -s /snap/bin/certbot /usr/bin/certbot
-  #sudo certbot --nginx
+  sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+  sudo dnf upgrade -y
+  sudo yum install -y snapd
+  sudo systemctl enable --now snapd.socket
+  sudo ln -s /var/lib/snapd/snap /snap
+  exec bash
+  sleep 300 # snap needs to get seeded
+  sudo snap install --classic certbot
+  sudo ln -s /snap/bin/certbot /usr/bin/certbot
+  sudo certbot -n --nginx --domains "guardin.net,www.guardin.net" -m christophe.vanneste@plantentuinmeise.be
 EOF
 """
 # Debug minikube
