@@ -8,6 +8,7 @@ from pulumi_aws import s3
 import os
 import base64
 import json
+from getpass import getpass
 
 # Create an AWS resource (S3 Bucket)
 bucket = s3.Bucket('b3-bucket',
@@ -41,6 +42,9 @@ bucket_object = s3.BucketObject(
 )
 
 pulumi.export('bucket_endpoint', pulumi.Output.concat('http://', bucket.website_endpoint))
+
+# Sensitive information
+gbif_pwd = aws.secretsmanager.Secret(getpass('Gbif password for "meisebg"'), name="gbif_pwd")
 
 # EC2 resources
 ## Security group
@@ -184,7 +188,20 @@ sudo mv ./kompose /usr/local/bin/kompose
 #pip3 install --user podman-compose
 su ec2-user -c 'mkdir ~/repos && cd ~/repos && git clone https://github.com/AgentschapPlantentuinMeise/guardgraph.git'
 
+# AWS CLI
+sudo yum -y install awscli
+mkdir /home/ec2-user/.aws
+cat - > /home/ec2-user/.aws/config <<"EOF"
+[default]
+region = eu-west-3
+role_arn = arn:aws:iam::657617321677:group/developer
+credential_source = Ec2InstanceMetadata
+EOF
+
 su - ec2-user <<"EOF"
+  # aws secrets
+  
+
   cd ~/repos/guardgraph
   
   ## build containers on minkube cluster
@@ -207,10 +224,13 @@ su - ec2-user <<"EOF"
   #sed -i 's/image: localhost\/web:latest/imagePullPolicy: Never\\n\ \ \ \ \ \ \ \ \ \ image: localhost\/web:latest/' \
   #  web-deployment.yaml 
   
-  # Set kubectl secret(s)
+  # Set kubectl config/secret(s)
   kubectl create secret generic neo4j-credential \
     --from-literal=neo4j-credential="$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c10)"
+  kubectl create configmap guard-config \
+    --from-literal=refuted-interactions='include'
   
+  # Start pods
   kubectl apply -f $(ls -m k8config/*.yaml | tr -d ' \\n')
   #kubectl delete -f $(ls -m k8config/*.yaml | tr -d ' \\n')
   # List services
@@ -236,18 +256,24 @@ su - ec2-user <<"EOF"
   else
       echo "K8 NOT READY YET! SOMETHIN PROBABLY WENT WRONG!"
   fi
-  
+
+  # Mail server
+  sudo dnf -y install postfix
+  sudo systemctl start postfix
+  sudo systemctl enable postfix
+  sudo bash -c "echo '@guardin.net christophe.vanneste@plantentuinmeise.be' > /etc/postfix/virtual"
+  sudo postmap /etc/postfix/virtual
+  sudo postfix reload
+
   #Enable ssl/https -> domain name required
   sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
   sudo dnf upgrade -y
   sudo yum install -y snapd
   sudo systemctl enable --now snapd.socket
   sudo ln -s /var/lib/snapd/snap /snap
-  exec bash
-  sleep 300 # snap needs to get seeded
-  sudo snap install --classic certbot
+  while ! bash -l -c 'sudo snap install --classic certbot'; do sleep 30; done
   sudo ln -s /snap/bin/certbot /usr/bin/certbot
-  sudo certbot -n --nginx --domains "guardin.net,www.guardin.net" -m christophe.vanneste@plantentuinmeise.be
+  sudo certbot -n --agree-tos --nginx --domains "www.guardin.net" -m christophe.vanneste@plantentuinmeise.be
 EOF
 """
 # Debug minikube
@@ -262,14 +288,20 @@ EOF
 b3server = aws.ec2.Instance(
     'b3-server',
     #instance_type="t2.micro", #t2 1CPU, t3 2CPU
-    instance_type="t2.2xlarge", #t4g.2xlarge", # 8 vCPU 32 GB
+    instance_type="r5a.xlarge",#"t2.2xlarge",#t4g.2xlarge", # 8 vCPU 32 GB
     ami="ami-05f804247228852a3", #"ami-0111c5910da90c2a7","ami-0f61de2873e29e866",
     user_data=user_data,
     # user_data_base64=base64.b64encode(user_data.encode("ascii")).decode("ascii"),
     #launch_template=launch_template_resource,
     vpc_security_group_ids=[security_group.id],
     key_name=key_pair.key_name,
-    root_block_device={"volume_size": 50}
+    root_block_device={"volume_size": 50},
+    #instance_market_options={
+    #    "market_type": "spot",
+    #    "spot_options": {
+    #        "max_price": "0.26", # https://aws.amazon.com/ec2/spot/pricing/
+    #    },
+    #}
 )
 
 pulumi.export('publicIp', b3server.public_ip)
