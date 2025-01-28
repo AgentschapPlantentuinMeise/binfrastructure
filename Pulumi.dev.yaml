@@ -1,2 +1,4 @@
 config:
   aws:region: eu-west-3
+  binfrastructure:gbifPassword:
+    secure: AAABABt537cXnSxjTGEJF5vVCGJGdXjpr5vh3puBgvieebOWMVAL39mm/LT44e6OHlgC0Q==

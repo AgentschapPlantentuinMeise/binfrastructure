@@ -1,6 +1,11 @@
 # binfrastructure
 B-cubed infrastructure as code repository
 
+# Secret configuration
+
+    pulumi config set --secret binfrastructure:gbifPassword
+
+
 # Mail server
 
 Do get the postfix server working, configuration on the server is
@@ -87,7 +92,12 @@ Or in one command
 ## Set gbif pwd in live container
 
     minikube ssh
-    docker container ls | grep worker
+    CONTAINERID=$(docker container ls | grep worker | head -n1 | cut -f1 -d' ')
     docker exec -it $CONTAINERID /bin/bash
     echo $GBIF_PWD > gbif_pwd
+
+# Kubectl commands
+
+    kubectl get secret neo4j-credential -o jsonpath='{.data.neo4j-credential}' | base64 --d
+ecode
 
